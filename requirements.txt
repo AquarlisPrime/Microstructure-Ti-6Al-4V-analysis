@@ -1,0 +1,9 @@
+Requirements:
+
+1. Python 3.8+
+2. OpenCV
+3. NumPy
+4. PyTorch (for UNet and diffusion model implementation)
+5. LPIPS metric library
+
+pip install -r requirements.txt
