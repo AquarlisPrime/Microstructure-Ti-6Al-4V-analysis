@@ -13,6 +13,21 @@ The primary objective is to analyze Ti-6Al-4V microstructure images and their co
 
 In essence, this study seeks to determine for which image categories or features the diffusion model performs optimally.
 
+## Results & Analysis
+Model performance was quantitatively evaluated using the Learned Perceptual Image Patch Similarity (LPIPS) metric across various microstructure textures. Each image was classified based on its texture (e.g., lamellar, martensitic, basketweave), and the LPIPS scores were aggregated for both left and right halves to increase resolution in texture-wise analysis.
+
+The LPIPS comparisons were visualized using heatmaps, where each row corresponded to a specific microstructure texture. Lower LPIPS values (cooler colors) indicated better perceptual fidelity between generated and real images.
+
+The analysis revealed:
+
+- Texture-dependent variation in LPIPS scores, with certain textures consistently showing better alignment between real and generated samples.
+
+- Model-specific strengths and weaknesses, as some architectures produced higher-quality images for certain textures but underperformed for others.
+
+- Regional performance trends, which highlighted specific microstructure regions that were more challenging for the model to replicate.
+
+These insights are instrumental in guiding model selection, architecture tuning, and identifying microstructural features that benefit most from synthetic augmentation.
+
 ## Scope  
 - Image preprocessing and augmentation for microstructure datasets  
 - Implementation of UNet architecture integrated within a diffusion model framework  
