@@ -401,20 +401,6 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 lpips_model = lpips.LPIPS(net='alex').to(device)
 lpips_model.eval()
 
-import torch
-import lpips
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from collections import defaultdict
-
-# Device setup
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-# Load pretrained LPIPS model (AlexNet backbone)
-lpips_model = lpips.LPIPS(net='alex').to(device)
-lpips_model.eval()
-
 def compute_lpips_and_saliency(pred_img, target_img):
     """
     Compute LPIPS perceptual distance and saliency heatmap showing
@@ -521,20 +507,6 @@ def main():
 if __name__ == "__main__":
     main()
 
-import os
-import torch
-import lpips
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from typing import Dict, List, Tuple, Optional, Union
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-# AlexNet backbone
-print("Setting up [LPIPS] perceptual loss: trunk [alex], v[0.1], spatial [off]")
-lpips_model = lpips.LPIPS(net='alex').to(device)
-lpips_model.eval()
-
 def compute_lpips_and_saliency(
     pred_img: torch.Tensor,
     target_img: torch.Tensor
@@ -546,13 +518,19 @@ def compute_lpips_and_saliency(
         pred_img.grad.zero_()
 
     lpips_score = lpips_model(pred_img, target_img)
-    lpips_score.backward()
+    lpips_score.sum().backward()  
 
-    saliency = pred_img.grad.abs().mean(dim=1).squeeze(0)
+    # L2 channels for saliency
+    saliency = pred_img.grad.detach()
+    saliency = torch.norm(saliency, p=2, dim=1).squeeze(0)
+
+    # Norm
     saliency -= saliency.min()
     saliency /= (saliency.max() + 1e-10)
+    saliency = saliency.clamp(0, 1)
 
     return lpips_score.item(), saliency.cpu().numpy()
+
 
 
 def compute_lpips_batch(
@@ -599,7 +577,108 @@ def load_checkpoint(
     return epoch, model, optimizer
 
 
-# Example 
+class LPIPSVisualizer:
+    def __init__(self, save_dir: Optional[str] = None):
+        self.save_dir = save_dir
+        if save_dir and not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+
+    def tensor_to_img(self, t: torch.Tensor) -> np.ndarray:
+        img = t.squeeze().permute(1, 2, 0).cpu().numpy()
+        img = (img + 1) / 2  
+        return np.clip(img, 0, 1)
+
+    def visualize_lpips_saliency(
+        self,
+        pred_img: torch.Tensor,
+        target_img: torch.Tensor,
+        saliency_map: np.ndarray,
+        lpips_score: float,
+        filename: Optional[str] = None
+    ) -> None:
+        plt.figure(figsize=(15, 5))
+        plt.subplot(1, 3, 1)
+        plt.title("Predicted Image")
+        plt.imshow(self.tensor_to_img(pred_img))
+        plt.axis('off')
+
+        plt.subplot(1, 3, 2)
+        plt.title("Target Image")
+        plt.imshow(self.tensor_to_img(target_img))
+        plt.axis('off')
+
+        plt.subplot(1, 3, 3)
+        plt.title(f"Saliency Map\nLPIPS: {lpips_score:.4f}")
+        plt.imshow(saliency_map, cmap='hot')
+        plt.axis('off')
+
+        plt.tight_layout()
+        if filename and self.save_dir:
+            filepath = os.path.join(self.save_dir, filename)
+            plt.savefig(filepath)
+            print(f"Saved visualization to {filepath}")
+            plt.close()
+        else:
+            plt.show()
+
+    def plot_classwise_lpips(self, lpips_per_class: Dict[str, List[float]], filename: Optional[str] = None) -> None:
+        class_names = list(lpips_per_class.keys())
+        mean_scores = [np.mean(scores) for scores in lpips_per_class.values()]
+        plt.figure(figsize=(10, 5))
+        plt.bar(class_names, mean_scores, color='skyblue')
+        plt.ylabel("Mean LPIPS Score")
+        plt.title("LPIPS per Class")
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        self._save_or_show_plot(filename, "classwise_lpips.png")
+
+    def plot_texturewise_lpips(self, lpips_per_texture: Dict[str, List[float]], filename: Optional[str] = None) -> None:
+        texture_names = list(lpips_per_texture.keys())
+        mean_scores = [np.mean(scores) for scores in lpips_per_texture.values()]
+        plt.figure(figsize=(10, 5))
+        plt.bar(texture_names, mean_scores, color='orange')
+        plt.ylabel("Mean LPIPS Score")
+        plt.title("LPIPS per Texture Cluster")
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        self._save_or_show_plot(filename, "texturewise_lpips.png")
+
+    def heatmap_classwise_lpips(self, lpips_per_class: Dict[str, List[float]], filename: Optional[str] = None) -> None:
+        class_names = list(lpips_per_class.keys())
+        mean_scores = [np.mean(scores) for scores in lpips_per_class.values()]
+        plt.figure(figsize=(8, 6))
+        sns.heatmap(np.array([mean_scores]), annot=True, fmt=".3f",
+                    xticklabels=class_names, yticklabels=['LPIPS'], cmap='coolwarm')
+        plt.title("Class-wise LPIPS Heatmap")
+        plt.tight_layout()
+        self._save_or_show_plot(filename, "heatmap_classwise.png")
+
+    def heatmap_texturewise_lpips(self, lpips_per_texture: Dict[str, List[float]], filename: Optional[str] = None) -> None:
+        texture_names = list(lpips_per_texture.keys())
+        mean_scores = [np.mean(scores) for scores in lpips_per_texture.values()]
+        plt.figure(figsize=(8, 6))
+        sns.heatmap(np.array([mean_scores]), annot=True, fmt=".3f",
+                    xticklabels=texture_names, yticklabels=['LPIPS'], cmap='YlGnBu')
+        plt.title("Texture Cluster-wise LPIPS Heatmap")
+        plt.tight_layout()
+        self._save_or_show_plot(filename, "heatmap_texturewise.png")
+
+    def _save_or_show_plot(self, filename: Optional[str], default_name: str):
+        if filename and self.save_dir:
+            filepath = os.path.join(self.save_dir, filename)
+            plt.savefig(filepath)
+            print(f"Saved plot to {filepath}")
+            plt.close()
+        elif self.save_dir:
+            filepath = os.path.join(self.save_dir, default_name)
+            plt.savefig(filepath)
+            print(f"Saved plot to {filepath}")
+            plt.close()
+        else:
+            plt.show()
+
+
+# Eg and simulation
 if __name__ == "__main__":
     H, W = 128, 128
     save_dir = "./lpips_vis"
@@ -626,123 +705,100 @@ if __name__ == "__main__":
             scores.append(score)
         lpips_scores_per_split[split_name] = scores
 
-    # score print
+    # LPIPS scores
     print("LPIPS scores per split:")
     for split, scores in lpips_scores_per_split.items():
         print(f"{split}: {scores}")
 
-    # Save points
+    # Save 
     dummy_model = torch.nn.Linear(10, 10)
     save_checkpoint(dummy_model, None, epoch=1, filepath="./lpips_checkpoint.pth")
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import torch
+from collections import defaultdict
+from typing import List, Tuple
 
-def visualize_lpips_saliency(pred_img, target_img, saliency_map, lpips_score):
+def lpips_2d_heatmap(
+    lpips_data: List[Tuple[str, str, float]],
+    title: str = "Combined LPIPS Heatmap (Class vs. Texture)"
+):
     
-    def tensor_to_img(t):
-        img = t.squeeze().permute(1, 2, 0).cpu().numpy()
-        img = (img + 1) / 2  
-        return np.clip(img, 0, 1)
+    heatmap_dict = defaultdict(lambda: defaultdict(list))
+    for cls, tex, score in lpips_data:
+        heatmap_dict[cls][tex].append(score)
 
-    pred_np = tensor_to_img(pred_img)
-    target_np = tensor_to_img(target_img)
+    all_classes = sorted(heatmap_dict.keys())
+    all_textures = sorted({tex for d in heatmap_dict.values() for tex in d})
 
-    plt.figure(figsize=(15, 5))
-    plt.subplot(1, 3, 1)
-    plt.title("Predicted Image")
-    plt.imshow(pred_np)
-    plt.axis('off')
+    heatmap_array = np.zeros((len(all_classes), len(all_textures)))
 
-    plt.subplot(1, 3, 2)
-    plt.title("Target Image")
-    plt.imshow(target_np)
-    plt.axis('off')
+    for i, cls in enumerate(all_classes):
+        for j, tex in enumerate(all_textures):
+            scores = heatmap_dict[cls].get(tex, [])
+            heatmap_array[i, j] = np.mean(scores) if scores else np.nan
 
-    plt.subplot(1, 3, 3)
-    plt.title(f"Saliency Map\nLPIPS: {lpips_score:.4f}")
-    plt.imshow(saliency_map, cmap='hot')
-    plt.axis('off')
-
+    # heatmap
+    plt.figure(figsize=(12, 6))
+    sns.heatmap(
+        heatmap_array,
+        annot=True,
+        fmt=".3f",
+        xticklabels=all_textures,
+        yticklabels=all_classes,
+        cmap='magma',
+        linewidths=0.5,
+        linecolor='gray'
+    )
+    plt.title(title)
+    plt.xlabel("Texture Cluster")
+    plt.ylabel("Class Label")
     plt.tight_layout()
     plt.show()
 
 
-def plot_classwise_lpips(lpips_per_class):
-    
-    class_names = list(lpips_per_class.keys())
-    mean_scores = [np.mean(scores) for scores in lpips_per_class.values()]
-
-    plt.figure(figsize=(10, 5))
-    plt.bar(class_names, mean_scores, color='skyblue')
-    plt.ylabel("Mean LPIPS Score")
-    plt.title("LPIPS per Class")
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_texturewise_lpips(lpips_per_texture):
+def generate_lpips_report_table(
+    lpips_data: List[Tuple[str, str, float]]
+) -> pd.DataFrame:
    
-    texture_names = list(lpips_per_texture.keys())
-    mean_scores = [np.mean(scores) for scores in lpips_per_texture.values()]
+    report = defaultdict(list)
 
-    plt.figure(figsize=(10, 5))
-    plt.bar(texture_names, mean_scores, color='orange')
-    plt.ylabel("Mean LPIPS Score")
-    plt.title("LPIPS per Texture Cluster")
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.show()
+    for cls, tex, score in lpips_data:
+        report[(cls, tex)].append(score)
+
+    records = []
+    for (cls, tex), scores in report.items():
+        scores_np = np.array(scores)
+        records.append({
+            'Class': cls,
+            'Texture': tex,
+            'Count': len(scores),
+            'Mean LPIPS': np.mean(scores_np),
+            'Std LPIPS': np.std(scores_np),
+            'Min LPIPS': np.min(scores_np),
+            'Max LPIPS': np.max(scores_np)
+        })
+
+    df = pd.DataFrame(records)
+    df = df.sort_values(by=["Class", "Texture"]).reset_index(drop=True)
+    return df
 
 
-def heatmap_classwise_lpips(lpips_per_class):
-    class_names = list(lpips_per_class.keys())
-    mean_scores = [np.mean(scores) for scores in lpips_per_class.values()]
-
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(np.array([mean_scores]), annot=True, fmt=".3f",
-                xticklabels=class_names, yticklabels=['LPIPS'], cmap='coolwarm')
-    plt.title("Class-wise LPIPS Heatmap")
-    plt.tight_layout()
-    plt.show()
-
-
-def heatmap_texturewise_lpips(lpips_per_texture):
-    texture_names = list(lpips_per_texture.keys())
-    mean_scores = [np.mean(scores) for scores in lpips_per_texture.values()]
-
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(np.array([mean_scores]), annot=True, fmt=".3f",
-                xticklabels=texture_names, yticklabels=['LPIPS'], cmap='YlGnBu')
-    plt.title("Texture Cluster-wise LPIPS Heatmap")
-    plt.tight_layout()
-    plt.show()
-
-# Example 
-def main():
-    H, W = 128, 128
-
-    target_img = torch.randn(1, 3, H, W).to(device)
-    target_img = torch.clamp(target_img, -1, 1)
-
-    noise = torch.randn_like(target_img) * 0.01
-    pred_img = torch.clamp(target_img + noise, -1, 1)
-
-    # Computing LPIPS and saliency
-    lpips_score, saliency_map = compute_lpips_and_saliency(pred_img, target_img)
-    visualize_lpips_saliency(pred_img, target_img, saliency_map, lpips_score)
-
-    # heatmaps dummy scores
-    lpips_per_class = {'alpha': [0.032, 0.041], 'beta': [0.025], 'lamellar': [0.045, 0.038]}
-    lpips_per_texture = {'fine': [0.031], 'coarse': [0.042, 0.037], 'mixed': [0.029]}
-
-    plot_classwise_lpips(lpips_per_class)
-    plot_texturewise_lpips(lpips_per_texture)
-    heatmap_classwise_lpips(lpips_per_class)
-    heatmap_texturewise_lpips(lpips_per_texture)
-
+# Eg
 if __name__ == "__main__":
-    main()
+    lpips_data = [
+        ("alpha", "coarse", 0.035), ("alpha", "coarse", 0.038),
+        ("alpha", "fine", 0.029),   ("beta", "coarse", 0.040),
+        ("beta", "mixed", 0.034),   ("lamellar", "fine", 0.036),
+        ("lamellar", "coarse", 0.043), ("lamellar", "mixed", 0.037),
+        ("beta", "fine", 0.031),    ("alpha", "mixed", 0.032)
+    ]
+
+    lpips_2d_heatmap(lpips_data)
+
+    # Gen n display
+    report_df = generate_lpips_report_table(lpips_data)
+    print("\n--- LPIPS Report Table ---\n")
+    print(report_df.to_string(index=False))
